@@ -231,4 +231,5 @@ app.get('/api/users', (req, res) => { res.json({ users: loadUsers() }); });
 
 app.get('/', (req, res) => { res.sendFile(path.join(PUBLIC_DIR, 'index.html')); });
 
-app.listen(PORT, () => { console.log('时光宝盒 server running on http://localhost:' + PORT); });
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => { console.log('时光宝盒 server running on http://' + HOST + ':' + PORT); });
