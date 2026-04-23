@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
+const https = require('https');
+const { URL } = require('url');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -200,15 +202,58 @@ app.post('/api/tts', (req, res) => {
   }
   outputFile = path.join(VOICES_DIR, fileName);
 
-  const voice = 'zh-CN-XiaoxiaoNeural';
-  const safeText = text.replace(/"/g, '\\"');
-  const EDGE_TTS = '/Users/chenyh/Library/Python/3.9/bin/edge-tts';
-  const cmd = '"' + EDGE_TTS + '" --text "' + safeText + '" --voice ' + voice + ' --write-media "' + outputFile + '"';
+  // MiniMax TTS API
+  const https = require('https');
+  const { URL } = require('url');
+  
+  const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY;
+  if (!MINIMAX_API_KEY) { return res.status(500).json({ error: 'MINIMAX_API_KEY not configured' }); }
 
-  exec(cmd, (err) => {
-    if (err) { console.error('TTS error:', err); return res.status(500).json({ error: 'TTS failed' }); }
-    res.json({ success: true, fileName, filePath: outputFile });
+  const payload = JSON.stringify({
+    model: 'speech-01-turbo',
+    text: text,
+    stream: false,
+    voice_setting: {
+      voice_id: 'male-qn-qingse',
+      speed: 0.8,
+      volume: 1.0,
+      pitch: 0
+    },
+    audio_setting: {
+      sample_rate: 44100,
+      bitrate: 128000,
+      format: 'mp3'
+    }
   });
+
+  const parsedUrl = new URL('https://api.minimax.chat/v1/t2a_v2');
+  const options = {
+    hostname: parsedUrl.hostname,
+    path: parsedUrl.pathname,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + MINIMAX_API_KEY,
+      'Content-Length': Buffer.byteLength(payload)
+    }
+  };
+
+  const ttsReq = https.request(options, (ttsRes) => {
+    const chunks = [];
+    ttsRes.on('data', (chunk) => chunks.push(chunk));
+    ttsRes.on('end', () => {
+      if (ttsRes.statusCode !== 200) {
+        console.error('MiniMax TTS error:', Buffer.concat(chunks).toString());
+        return res.status(500).json({ error: 'TTS failed: ' + ttsRes.statusCode });
+      }
+      fs.writeFileSync(outputFile, Buffer.concat(chunks));
+      res.json({ success: true, fileName, filePath: outputFile });
+    });
+  });
+
+  ttsReq.on('error', (err) => { console.error('TTS request error:', err); res.status(500).json({ error: 'TTS request failed' }); });
+  ttsReq.write(payload);
+  ttsReq.end();;
 });
 
 app.get('/api/voices/:fileName', (req, res) => {
