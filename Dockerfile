@@ -3,6 +3,6 @@ WORKDIR /app
 COPY backend/package.json ./
 RUN npm install --production
 COPY backend/ ./
-# Railway自动设置PORT环境变量，不要在这里覆盖
+# 不写死PORT，让Railway自动设置（Railway会自动设置PORT变量）
 EXPOSE 3000
 CMD ["node", "server.js"]
