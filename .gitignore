@@ -1,0 +1,9 @@
+# User data - never commit
+voices/
+backend/capsules.json
+backend/users.json
+backend/feedback.json
+backend/tts_*.mp3
+backend/capsules.json.bak.20260415
+backend/node_modules/
+.DS_Store

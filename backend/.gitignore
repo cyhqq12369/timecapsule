@@ -1,0 +1,7 @@
+node_modules/
+*.json
+!package.json
+*.log
+*.mp3
+.env
+.DS_Store

@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="format-detection" content="telephone=no">
+  <title>时光宝盒</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    :root {
+      --cream: #FFF8F0; --orange: #E8714A; --orange-light: #F4A261;
+      --orange-pale: #FAEBD7; --brown: #7B3F00; --text: #4A3728;
+      --shadow: rgba(122, 63, 0, 0.15);
+    }
+    html, body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(135deg, #FFF8F0 0%, #FDE8D8 100%);
+      min-height: 100vh; min-height: 100dvh;
+      color: var(--text); -webkit-font-smoothing: antialiased; overscroll-behavior: none;
+    }
+    #app { max-width: 600px; margin: 0 auto; padding: 16px 14px 80px; }
+    .header { text-align: center; padding: 24px 0 20px; }
+    .header-icon { font-size: 44px; margin-bottom: 6px; }
+    .header h1 { font-size: 26px; color: var(--brown); font-weight: 700; }
+    .header p { color: var(--orange); font-size: 13px; margin-top: 4px; }
+    .user-bar { background: white; border-radius: 16px; padding: 12px 16px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 12px var(--shadow); }
+    .user-info { font-size: 13px; color: var(--brown); }
+    .user-info strong { color: var(--orange); }
+    .logout-btn { background: none; border: 1.5px solid var(--orange); color: var(--orange); border-radius: 20px; padding: 5px 14px; font-size: 12px; cursor: pointer; font-family: inherit; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 20px; background: white; border-radius: 16px; padding: 5px; box-shadow: 0 2px 12px var(--shadow); position: sticky; top: 8px; z-index: 100; }
+    .tab { flex: 1; padding: 12px 8px; border: none; background: transparent; border-radius: 12px; font-size: 14px; font-weight: 600; color: var(--text); cursor: pointer; transition: all 0.25s; min-height: 48px; display: flex; align-items: center; justify-content: center; }
+    .tab.active { background: var(--orange); color: white; }
+    .card { background: white; border-radius: 20px; padding: 20px; margin-bottom: 14px; box-shadow: 0 4px 20px var(--shadow); }
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 14px; font-weight: 600; color: var(--brown); margin-bottom: 8px; }
+    .form-group input, .form-group textarea {
+      width: 100%; padding: 14px; border: 2px solid var(--orange-pale);
+      border-radius: 12px; font-size: 16px; font-family: inherit;
+      background: var(--cream); color: var(--text); outline: none;
+      transition: border-color 0.3s; -webkit-appearance: none;
+    }
+    .form-group input:focus, .form-group textarea:focus { border-color: var(--orange); }
+    .form-group input::placeholder, .form-group textarea::placeholder { color: #bbb; font-size: 15px; }
+    .form-group textarea { resize: vertical; min-height: 140px; line-height: 1.6; }
+    .form-hint { font-size: 12px; color: #aaa; margin-top: 4px; text-align: right; }
+    .btn { width: 100%; padding: 16px; border: none; border-radius: 14px; font-size: 16px; font-weight: 700; cursor: pointer; transition: all 0.25s; font-family: inherit; min-height: 52px; display: flex; align-items: center; justify-content: center; -webkit-user-select: none; user-select: none; }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: linear-gradient(135deg, var(--orange) 0%, var(--orange-light) 100%); color: white; box-shadow: 0 4px 15px rgba(232, 113, 74, 0.4); }
+    .btn-secondary { background: var(--orange-pale); color: var(--orange); margin-top: 10px; }
+    .btn-feedback { background: linear-gradient(135deg, var(--brown) 0%, #5a2d00 100%); color: white; margin-top: 16px; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none !important; }
+    .capsule-card { border-left: 5px solid var(--orange); }
+    .capsule-card.delivered { border-left-color: #4CAF50; }
+    .capsule-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 6px; }
+    .capsule-names { font-size: 15px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .capsule-names .from { color: var(--orange); font-weight: 700; }
+    .capsule-names .arrow { color: #bbb; }
+    .capsule-names .to { color: var(--brown); font-weight: 700; }
+    .capsule-phone { font-size: 11px; color: #aaa; margin-top: 2px; }
+    .status-badge { padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .status-locked { background: #FFF0E8; color: var(--orange); }
+    .status-unlocked { background: #E8F5E9; color: #2E7D32; }
+    .countdown { font-size: 13px; color: var(--orange); margin-top: 8px; }
+    .delivery-date { font-size: 13px; color: #888; margin-top: 4px; }
+    .message-preview { background: var(--cream); border-radius: 12px; padding: 12px; margin-top: 12px; font-size: 14px; line-height: 1.6; max-height: 80px; overflow: hidden; position: relative; }
+    .message-preview::after { content: ""; position: absolute; bottom: 0; left: 0; right: 0; height: 30px; background: linear-gradient(transparent, var(--cream)); }
+    .capsule-view { text-align: center; padding: 24px 16px; }
+    .capsule-view .unlock-icon { font-size: 56px; margin-bottom: 14px; }
+    .capsule-view .message-body { background: var(--cream); border-radius: 16px; padding: 18px; font-size: 15px; line-height: 1.8; text-align: left; margin: 14px 0; white-space: pre-wrap; word-break: break-all; }
+    .tts-btn { display: inline-flex; align-items: center; gap: 6px; padding: 12px 24px; background: var(--orange); color: white; border: none; border-radius: 30px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 12px; font-family: inherit; transition: all 0.25s; min-height: 48px; }
+    .tts-btn:active { transform: scale(0.96); }
+    .tts-btn:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+    .empty-state { text-align: center; padding: 40px 16px; color: #aaa; }
+    .empty-state .icon { font-size: 44px; margin-bottom: 10px; }
+    .filter-bar { display: flex !important; gap: 8px; margin-bottom: 14px; position: relative; z-index: 10; visibility: visible !important; }
+    .filter-bar input { flex: 1 !important; display: block !important; padding: 12px 14px; border: 2px solid var(--orange-pale); border-radius: 12px; font-size: 14px; background: white !important; outline: none; font-family: inherit; min-height: 48px; pointer-events: auto; -webkit-appearance: none; visibility: visible !important; }
+    .filter-bar input:focus { border-color: var(--orange); }
+    .filter-bar input::placeholder { color: #bbb; }
+    .notification-bar { position: fixed; top: 0; left: 0; right: 0; background: linear-gradient(135deg, var(--orange) 0%, var(--orange-light) 100%); color: white; text-align: center; padding: 14px 16px; font-size: 14px; font-weight: 600; z-index: 1001; transform: translateY(-100%); transition: transform 0.4s ease; box-shadow: 0 4px 15px rgba(232, 113, 74, 0.5); }
+    .notification-bar.show { transform: translateY(0); }
+    .notification-bar .close { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; color: white; font-size: 20px; cursor: pointer; min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(120px); background: var(--brown); color: white; padding: 12px 24px; border-radius: 30px; font-size: 14px; font-weight: 600; z-index: 1002; transition: transform 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast .closebtn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; cursor: pointer; color: #fff; opacity: 0.8; min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+    .feedback-tip { background: var(--orange-pale); border-radius: 12px; padding: 14px; font-size: 13px; color: var(--brown); margin-bottom: 16px; line-height: 1.7; }
+    .feedback-success { text-align: center; padding: 32px 16px; }
+    .feedback-success .icon { font-size: 48px; margin-bottom: 12px; }
+    .loading-state { text-align: center; padding: 40px; color: #aaa; font-size: 14px; }
+    .login-hero { text-align: center; padding: 20px 0 8px; }
+    .login-hero .icon { font-size: 64px; margin-bottom: 12px; }
+    .login-hero h2 { color: var(--brown); font-size: 22px; margin-bottom: 8px; }
+    .login-hero p { color: #888; font-size: 13px; line-height: 1.6; margin-bottom: 20px; }
+    .phone-login-card { background: white; border-radius: 24px; padding: 28px 24px; box-shadow: 0 8px 32px var(--shadow); margin: 0 4px; }
+    .divider { display: flex; align-items: center; gap: 12px; margin: 16px 0; color: #ccc; font-size: 12px; }
+    .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #eee; }
+    @media (max-width: 480px) {
+      .header h1 { font-size: 24px; }
+      .card { padding: 16px; border-radius: 16px; }
+      .tabs { border-radius: 14px; gap: 4px; }
+      .tab { font-size: 13px; padding: 10px 6px; border-radius: 10px; }
+      .form-group input, .form-group textarea { font-size: 16px; padding: 14px 12px; }
+      .btn { font-size: 15px; padding: 15px; min-height: 50px; }
+      .toast { bottom: 16px; }
+    }
+    @supports (padding: env(safe-area-inset-bottom)) {
+      #app { padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
+      .toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="notification-bar" :class="{ show: notification.show }">
+      {{ notification.count }} 个时光宝盒可以打开了！
+      <button class="close" @click="notification.show = false" aria-label="关闭">x</button>
+    </div>
+    <div class="toast" :class="{ show: toast.show }">
+      {{ toast.msg }}
+      <button class="closebtn" @click="toast.show=false" aria-label="关闭">x</button>
+    </div>
+
+    <div class="header">
+      <div class="header-icon">&#127873;</div>
+      <h1>时光宝盒</h1>
+      <p>写给未来的自己或重要的人</p>
+    </div>
+
+    <!-- 未登录状态：显示登录页 -->
+    <div v-if="!isLoggedIn">
+      <div class="login-hero">
+        <div class="icon">&#128231;</div>
+        <h2>登录时光宝盒</h2>
+        <p>手机号 + 密码即可登录 / 注册</p>
+      </div>
+      <div class="phone-login-card">
+        <div class="form-group">
+          <label>手机号</label>
+          <input v-model="loginPhone" type="tel" placeholder="请输入11位手机号" maxlength="11" autocomplete="tel" />
+        </div>
+        <div class="form-group">
+          <label>密码（至少4位）</label>
+          <input v-model="loginPassword" type="password" placeholder="请输入密码" />
+        </div>
+        <div class="form-group">
+          <label>微信联系方式（选填）</label>
+          <input v-model="loginWechat" type="text" placeholder="用于接收语音发送" maxlength="100" />
+        </div>
+        <button class="btn btn-primary" @click="isLoginMode ? doLogin() : doRegister()" :disabled="loggingIn || !loginPhone || !loginPassword">
+          {{ loggingIn ? (isLoginMode ? '登录中...' : '注册中...') : (isLoginMode ? '登录' : '注册') }}
+        </button>
+        <div class="divider" v-if="!isLoginMode">已是会员？<a href="#" @click.prevent="isLoginMode=true; loginPassword=''" style="color:var(--orange);font-weight:600">点此登录</a></div>
+        <div class="divider" v-if="isLoginMode">还不是会员？<a href="#" @click.prevent="isLoginMode=false; loginPassword=''" style="color:var(--orange);font-weight:600">点此注册</a></div>
+        <p style="font-size:11px;color:#bbb;text-align:center;line-height:1.6;margin-top:12px">登录即表示同意我们的服务协议<br/>你的手机号仅用于账号识别，不会泄露</p>
+      </div>
+    </div>
+
+    <!-- 已登录状态 -->
+    <template v-else>
+      <div class="user-bar">
+        <div class="user-info">
+          &#128241; <strong>{{ userPhone }}</strong>
+          <span v-if="userWechat"> | &#128187; {{ userWechat }}</span>
+        </div>
+        <button class="logout-btn" @click="logout">退出</button>
+      </div>
+
+      <div class="tabs">
+        <button class="tab" :class="{ active: tab === 'create' }" @click="tab = 'create'">创建宝盒</button>
+        <button class="tab" :class="{ active: tab === 'my' }" @click="tab = 'my'; loadCapsules()">我的宝盒</button>
+        <button class="tab" :class="{ active: tab === 'feedback' }" @click="tab = 'feedback'">意见反馈</button>
+      </div>
+
+      <div v-if="tab === 'create'">
+        <div class="card">
+          <div class="form-group">
+            <label>发送者（你是谁）</label>
+            <input v-model="form.from" type="text" placeholder="请输入你的名字" maxlength="50" />
+          </div>
+          <div class="form-group">
+            <label>接收者（给谁）</label>
+            <input v-model="form.to" type="text" placeholder="请输入接收者名字" maxlength="50" />
+          </div>
+          <div class="form-group">
+            <label>送达日期</label>
+            <input v-model="form.deliveryDate" type="date" :min="minDate" />
+          </div>
+          <div class="form-group">
+            <label>留言内容</label>
+            <textarea v-model="form.message" placeholder="在这里写下想说的话..." maxlength="2000"></textarea>
+            <div class="form-hint">{{ form.message.length }}/2000</div>
+          </div>
+          <div class="form-group">
+            <label>TTS 朗读文本（可选）</label>
+            <input v-model="form.voiceText" type="text" placeholder="留空则自动朗读留言内容" maxlength="2000" />
+          </div>
+          <div class="form-group">
+            <label>微信联系方式（用于接收语音）</label>
+            <input v-model="form.wechatContact" type="text" :placeholder="userWechat || '请输入微信号'" maxlength="100" />
+          </div>
+          <button class="btn btn-primary" @click="createCapsule" :disabled="creating">
+            {{ creating ? '投放中...' : '投入时光宝盒' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 支付引导页 -->
+      <div v-if="tab === 'payment'" class="card" style="text-align:center">
+        <div style="font-size:48px;margin-bottom:12px">&#9989;</div>
+        <h2 style="color:#7B3F00;margin-bottom:8px">时光宝盒已创建！</h2>
+        <p style="color:#888;font-size:14px;margin-bottom:20px">请扫码支付后，截图联系下方微信获取语音</p>
+        <img src="/wechat_pay.png" style="max-width:260px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.15);margin:16px 0" alt="微信支付码" />
+        <div style="background:#FFF8F0;border-radius:12px;padding:16px;text-align:left;margin-top:16px">
+          <p style="font-size:14px;color:#7B3F00;font-weight:600;margin-bottom:8px">&#128276; 支付步骤：</p>
+          <ol style="font-size:13px;color:#4A3728;line-height:2;padding-left:20px">
+            <li>长按或保存上方二维码到相册</li>
+            <li>打开微信扫一扫，从相册选择此码支付</li>
+            <li>支付 <strong style="color:#E8714A">13.9元包月费用</strong></li>
+            <li>截图保存付款凭证，微信搜索 <strong style="color:#E8714A">cyh-xuan</strong>，添加</li>
+            <li>备注「时光宝盒」发送截图，24小时内微信上可以收到语音消息</li>
+          </ol>
+        </div>
+        <p style="font-size:12px;color:#aaa;margin-top:16px">付款后 24 小时内发送语音，节假日除外</p>
+        <button class="btn btn-secondary" @click="tab='my'; loadCapsules()" style="margin-top:16px">
+          查看我的宝盒
+        </button>
+      </div>
+
+      <div v-if="tab === 'my'">
+        <div class="filter-bar">
+          <input v-model="filterFrom" type="text" placeholder="按发送者筛选" @input="loadCapsules" aria-label="筛选" />
+          <input v-model="filterTo" type="text" placeholder="按接收者筛选" @input="loadCapsules" aria-label="筛选" />
+        </div>
+        <div v-if="loadingCapsules" class="loading-state">加载中...</div>
+        <div v-else-if="filteredCapsules.length === 0" class="empty-state">
+          <div class="icon">&#128230;</div>
+          <p>还没有时光宝盒</p>
+          <p style="font-size:13px;margin-top:4px">创建第一个宝盒吧！</p>
+        </div>
+        <div v-else>
+          <div v-for="capsule in filteredCapsules" :key="capsule.id" class="card capsule-card" :class="{ delivered: capsule.delivered }">
+            <div class="capsule-meta">
+              <div class="capsule-names">
+                <span class="from">{{ capsule.from }}</span>
+                <span class="arrow">-&gt;</span>
+                <span class="to">{{ capsule.to }}</span>
+              </div>
+              <span class="status-badge" :class="capsule.delivered ? 'status-unlocked' : 'status-locked'">
+                {{ capsule.delivered ? '[已送达]' : '[待送达]' }}
+              </span>
+            </div>
+            <div class="capsule-phone">&#128241; {{ capsule.wechatContact || userWechat }}</div>
+            <template v-if="!capsule.delivered">
+              <div class="countdown">&#9202; {{ getCountdown(capsule.deliveryDate) }}</div>
+              <div class="delivery-date">&#128197; {{ formatDate(capsule.deliveryDate) }} 送达</div>
+              <div class="message-preview">{{ capsule.message }}</div>
+            </template>
+            <template v-else>
+              <div class="capsule-view">
+                <div class="unlock-icon">&#127873;</div>
+                <div class="capsule-names" style="justify-content:center">
+                  <span class="from">{{ capsule.from }}</span>
+                  <span class="arrow">-&gt;</span>
+                  <span class="to">{{ capsule.to }}</span>
+                </div>
+                <div class="message-body">{{ capsule.message }}</div>
+                <button class="tts-btn" @click="playTTS(capsule)" :disabled="ttsLoading === capsule.id">
+                  {{ ttsLoading === capsule.id ? '[朗读中...]' : '[点击朗读]' }}
+                </button>
+                <div style="margin-top:10px;font-size:12px;color:#aaa;">
+                  语音文件：{{ getVoiceFileName(capsule) }}
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="tab === 'feedback'">
+        <div v-if="feedbackSent" class="card feedback-success">
+          <div class="icon">&#9989;</div>
+          <p style="font-weight:600;color:#7B3F00;margin-bottom:8px">感谢你的反馈！</p>
+          <p>我们会认真阅读每一条意见</p>
+          <button class="btn btn-secondary" @click="feedbackSent=false;feedbackContent='';feedbackContact=''" style="margin-top:20px">再写一条</button>
+        </div>
+        <div v-else class="card">
+          <div class="feedback-tip">&#128172; 如果你对时光宝盒有任何想法、功能建议、使用问题，或者想分享的故事，都欢迎告诉我们！</div>
+          <div class="form-group">
+            <label>意见反馈</label>
+            <textarea v-model="feedbackContent" placeholder="请写下你的意见或建议..." maxlength="1000" style="min-height:160px"></textarea>
+            <div class="form-hint">{{ feedbackContent.length }}/1000</div>
+          </div>
+          <div class="form-group">
+            <label>联系方式（可选）</label>
+            <input v-model="feedbackContact" type="text" placeholder="邮箱或微信，方便我们联系你" maxlength="100" />
+          </div>
+          <button class="btn btn-feedback" @click="submitFeedback" :disabled="submitting || !feedbackContent.trim()">
+            {{ submitting ? '提交中...' : '提交反馈' }}
+          </button>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <script>
+    const { createApp } = Vue;
+    createApp({
+      data() {
+        return {
+          isLoggedIn: false, userPhone: '', userWechat: '', token: '', isLoginMode: false, loginPassword: '',
+          loginPhone: '', loginWechat: '', loggingIn: false,
+          codeTimer: null,
+          tab: 'create', form: { from: '', to: '', deliveryDate: '', message: '', voiceText: '', wechatContact: '' },
+          capsules: [], filteredCapsules: [], filterFrom: '', filterTo: '',
+          loadingCapsules: false, creating: false, ttsLoading: null,
+          notification: { show: false, count: 0 },
+          toast: { show: false, msg: '' },
+          minDate: new Date().toISOString().split('T')[0],
+          checkTimer: null,
+          feedbackContent: '', feedbackContact: '', submitting: false, feedbackSent: false
+        };
+      },
+      watch: { filterFrom() { this.applyFilters(); }, filterTo() { this.applyFilters(); } },
+      mounted() {
+        this.checkSession(); this.startCheck();
+      },
+      beforeUnmount() { if (this.checkTimer) clearInterval(this.checkTimer); },
+      methods: {
+        authHeaders() { return this.token ? { 'Authorization': 'Bearer ' + this.token, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' }; },
+        showToast(msg) { this.toast.msg = msg; this.toast.show = true; setTimeout(() => { this.toast.show = false; }, 3000); },
+        formatDate(dateStr) { const d = new Date(dateStr); return d.getFullYear() + '年' + (d.getMonth()+1) + '月' + d.getDate() + '日'; },
+        getCountdown(dateStr) {
+          const now = new Date(); const due = new Date(dateStr);
+          const diff = due - now;
+          if (diff <= 0) return '即将送达';
+          const days = Math.floor(diff / 86400000);
+          const hours = Math.floor((diff % 86400000) / 3600000);
+          if (days > 0) return '还有 ' + days + ' 天' + hours + ' 小时';
+          if (hours > 0) return '还有 ' + hours + ' 小时';
+          return '不到 1 小时';
+        },
+        getVoiceFileName(capsule) {
+          const now = new Date(); const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+          const wechat = capsule.wechatContact || this.userWechat || '';
+          const from = capsule.from || ''; const to = capsule.to || '';
+          const w = wechat.replace(/[\/\\:*?"<>|]/g, '_');
+          const f = from.replace(/[\/\\:*?"<>|]/g, '_');
+          const t = to.replace(/[\/\\:*?"<>|]/g, '_');
+          return (this.userPhone || '') + '_' + w + '_' + dateStr + '_' + f + 'to' + t + '.mp3';
+        },
+        async checkSession() {
+          const token = localStorage.getItem('tcb_token');
+          const phone = localStorage.getItem('tcb_phone');
+          const wechat = localStorage.getItem('tcb_wechat');
+          if (token && phone) {
+            try {
+              const res = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } });
+              if (res.ok) {
+                const data = await res.json();
+                this.token = token; this.userPhone = data.phone; this.userWechat = data.wechatContact || wechat || ''; this.isLoggedIn = true;
+              } else { this.clearSession(); }
+            } catch (e) { this.clearSession(); }
+          }
+        },
+        clearSession() { localStorage.removeItem('tcb_token'); localStorage.removeItem('tcb_phone'); localStorage.removeItem('tcb_wechat'); this.token = ''; this.userPhone = ''; this.userWechat = ''; this.isLoggedIn = false; },
+
+        async doLogin() {
+          if (!/^1\d{10}$/.test(this.loginPhone) || !this.loginPassword) { this.showToast('请填写手机号和密码'); return; }
+          this.loggingIn = true;
+          try {
+            const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: this.loginPhone, password: this.loginPassword, wechatContact: this.loginWechat }) });
+            const data = await res.json();
+            if (data.success) {
+              this.token = data.token; this.userPhone = data.phone; this.userWechat = data.wechatContact || this.loginWechat || ''; this.isLoggedIn = true;
+              localStorage.setItem('tcb_token', this.token); localStorage.setItem('tcb_phone', this.userPhone); localStorage.setItem('tcb_wechat', this.userWechat);
+              this.loginPhone = ''; this.loginPassword = ''; this.loginWechat = ''; this.isLoginMode = false;
+            } else { this.showToast(data.error || '登录失败'); }
+          } catch (e) { this.showToast('网络错误'); }
+          this.loggingIn = false;
+        },
+        async doRegister() {
+          if (!/^1\d{10}$/.test(this.loginPhone) || !this.loginPassword) { this.showToast('请填写手机号和密码'); return; }
+          this.loggingIn = true;
+          try {
+            const res = await fetch('/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: this.loginPhone, password: this.loginPassword, wechatContact: this.loginWechat }) });
+            const data = await res.json();
+            if (data.success) {
+              this.token = data.token; this.userPhone = data.phone; this.userWechat = this.loginWechat || ''; this.isLoggedIn = true;
+              localStorage.setItem('tcb_token', this.token); localStorage.setItem('tcb_phone', this.userPhone); localStorage.setItem('tcb_wechat', this.userWechat);
+              this.loginPhone = ''; this.loginPassword = ''; this.loginWechat = ''; this.isLoginMode = false;
+              this.showToast('注册成功！');
+            } else { this.showToast(data.error || '注册失败'); }
+          } catch (e) { this.showToast('网络错误'); }
+          this.loggingIn = false;
+        },
+        logout() { fetch('/api/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + this.token } }); this.clearSession(); this.tab = 'create'; },
+        async submitFeedback() {
+          if (!this.feedbackContent.trim()) return;
+          this.submitting = true;
+          try {
+            const res = await fetch('/api/feedback', { method: 'POST', headers: this.authHeaders(), body: JSON.stringify({ content: this.feedbackContent.trim(), contact: this.feedbackContact.trim() }) });
+            const data = await res.json();
+            if (data.success) { this.feedbackSent = true; } else { this.showToast(data.error || '提交失败'); }
+          } catch (e) { this.showToast('网络错误'); }
+          this.submitting = false;
+        },
+        async createCapsule() {
+          const { from, to, deliveryDate, message } = this.form;
+          if (!from.trim() || !to.trim() || !deliveryDate || !message.trim()) { this.showToast('请填写完整信息'); return; }
+          this.creating = true;
+          try {
+            const res = await fetch('/api/capsule', { method: 'POST', headers: this.authHeaders(), body: JSON.stringify({ from: from.trim(), to: to.trim(), deliveryDate, message: message.trim(), voiceText: this.form.voiceText.trim() || null, wechatContact: this.form.wechatContact.trim() || this.userWechat || null }) });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('时光宝盒投放成功！');
+              this.form = { from: '', to: '', deliveryDate: '', message: '', voiceText: '', wechatContact: '' };
+              this.tab = 'payment'; this.loadCapsules();
+            } else { this.showToast(data.error || '创建失败'); }
+          } catch (e) { this.showToast('网络错误'); }
+          this.creating = false;
+        },
+        async loadCapsules() {
+          this.loadingCapsules = true;
+          try {
+            const params = new URLSearchParams();
+            if (this.filterFrom) params.append('from', this.filterFrom);
+            if (this.filterTo) params.append('to', this.filterTo);
+            const url = '/api/capsules' + (params.toString() ? '?' + params.toString() : '');
+            const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + this.token } });
+            const data = await res.json();
+            this.capsules = data.capsules || []; this.applyFilters();
+          } catch (e) { this.showToast('加载失败'); }
+          this.loadingCapsules = false;
+        },
+        applyFilters() {
+          let list = [...this.capsules];
+          if (this.filterFrom) list = list.filter(c => c.from.toLowerCase().includes(this.filterFrom.toLowerCase()));
+          if (this.filterTo) list = list.filter(c => c.to.toLowerCase().includes(this.filterTo.toLowerCase()));
+          this.filteredCapsules = list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        },
+        async playTTS(capsule) {
+          if (this.ttsLoading) return;
+          const text = capsule.voiceText || capsule.message;
+          this.ttsLoading = capsule.id;
+          try {
+            const res = await fetch('/api/tts', { method: 'POST', headers: this.authHeaders(), body: JSON.stringify({ text, capsuleId: capsule.id }) });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error('TTS failed');
+            const audioRes = await fetch('/api/voices/' + encodeURIComponent(data.fileName));
+            const blob = await audioRes.blob();
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url); audio.play();
+            audio.onended = () => { URL.revokeObjectURL(url); this.ttsLoading = null; };
+            this.showToast('语音已生成：' + data.fileName);
+          } catch (e) { this.showToast('朗读失败，请检查 edge-tts 是否安装'); this.ttsLoading = null; }
+        },
+        async startCheck() {
+          const check = async () => {
+            try {
+              const res = await fetch('/api/check');
+              const data = await res.json();
+              if (data.dueCapsules && data.dueCapsules.length > 0) { this.notification.count = data.dueCapsules.length; this.notification.show = true; this.loadCapsules(); }
+            } catch (e) {}
+          };
+          check();
+          this.checkTimer = setInterval(check, 60000);
+        }
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
