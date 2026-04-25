@@ -17,6 +17,8 @@ const FEEDBACK_FILE = path.join(__dirname, 'feedback.json');
 const USERS_FILE = path.join(__dirname, 'users.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
+app.use(express.json({ limit: '10mb' }));
+
 // R2 Cloudflare 配置（环境变量注入，代码库不存 secrets）
 const R2_CLIENT = new S3Client({
   region: 'auto',
