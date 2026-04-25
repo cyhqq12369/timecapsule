@@ -1,0 +1,6 @@
+[phases.setup]
+nixpkgs = ["nodejs_20"]
+
+[phase.setup]
+buildCmd = "cd backend && npm install && npm prune --production"
+startCmd = "cd backend && PORT=3000 node server.js"
