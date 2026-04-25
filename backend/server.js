@@ -6,23 +6,44 @@ const { v4: uuidv4 } = require('uuid');
 const https = require('https');
 const { URL } = require('url');
 
+// AWS S3 SDK v3 for R2
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 const CAPSULES_FILE = path.join(__dirname, 'capsules.json');
 const FEEDBACK_FILE = path.join(__dirname, 'feedback.json');
 const USERS_FILE = path.join(__dirname, 'users.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VOICES_DIR = process.env.VOICES_DIR || path.join(__dirname, 'voices');
 
-if (!fs.existsSync(VOICES_DIR)) {
-  fs.mkdirSync(VOICES_DIR, { recursive: true });
+// R2 Cloudflare 配置（环境变量注入，代码库不存 secrets）
+const R2_CLIENT = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  },
+});
+const R2_BUCKET = process.env.R2_BUCKET || 'timecapsule-voices';
+
+async function uploadToR2(fileName, buffer, contentType = 'audio/mpeg') {
+  const command = new PutObjectCommand({
+    Bucket: R2_BUCKET,
+    Key: fileName,
+    Body: buffer,
+    ContentType: contentType,
+  });
+  await R2_CLIENT.send(command);
 }
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.static(PUBLIC_DIR));
+async function getR2PresignedUrl(fileName, expiresIn = 604800) {
+  const command = new GetObjectCommand({ Bucket: R2_BUCKET, Key: fileName });
+  return getSignedUrl(R2_CLIENT, command, { expiresIn });
+}
 
 // ============ 内存存储 ============
-// { token: { phone, password, wechatContact, createdAt } }
 const sessions = new Map();
 
 function safeFilename(str) {
@@ -59,8 +80,6 @@ function saveUser(userData) {
 }
 
 // ============ 登录 API ============
-
-// 注册
 app.post('/api/register', (req, res) => {
   const { phone, password, wechatContact } = req.body;
   if (!phone || !/^1\d{10}$/.test(phone)) { return res.status(400).json({ error: '请输入正确的11位手机号' }); }
@@ -73,7 +92,6 @@ app.post('/api/register', (req, res) => {
   res.json({ success: true, token, phone });
 });
 
-// 登录
 app.post('/api/login', (req, res) => {
   const { phone, password, wechatContact } = req.body;
   if (!phone || !password) { return res.status(400).json({ error: '手机号和密码不能为空' }); }
@@ -82,12 +100,10 @@ app.post('/api/login', (req, res) => {
   if (user.password !== password) { return res.status(400).json({ error: '密码错误' }); }
   const token = uuidv4();
   sessions.set(token, { phone, wechatContact: wechatContact || user.wechatContact || '', createdAt: new Date().toISOString() });
-  // 更新最后登录时间
   saveUser({ phone, password: user.password, wechatContact: wechatContact || user.wechatContact || '', lastLogin: new Date().toISOString() });
   res.json({ success: true, token, phone });
 });
 
-// 验证 token 并获取用户信息
 app.get('/api/me', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token || !sessions.has(token)) { return res.status(401).json({ error: '未登录' }); }
@@ -96,7 +112,6 @@ app.get('/api/me', (req, res) => {
   res.json({ phone: session.phone, wechatContact: session.wechatContact, user });
 });
 
-// 登出
 app.post('/api/logout', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (token) sessions.delete(token);
@@ -175,8 +190,8 @@ app.post('/api/capsule/:id/deliver', (req, res) => {
   res.json({ success: true, capsule: capsules[idx] });
 });
 
-// ============ TTS ============
-app.post('/api/tts', (req, res) => {
+// ============ TTS → R2 ============
+app.post('/api/tts', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token || !sessions.has(token)) { return res.status(401).json({ error: '请先登录' }); }
   const session = sessions.get(token);
@@ -188,7 +203,7 @@ app.post('/api/tts', (req, res) => {
   const phoneStr = safeFilename(session.phone);
   const wechatStr = safeFilename(session.wechatContact || '未知微信');
 
-  let fileName, outputFile;
+  let fileName;
   if (capsuleId) {
     const capsules = loadCapsules();
     const capsule = capsules.find(c => c.id === capsuleId);
@@ -200,13 +215,11 @@ app.post('/api/tts', (req, res) => {
   } else {
     fileName = `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
   }
-  outputFile = path.join(VOICES_DIR, fileName);
 
-  // MiniMax TTS API - 替换edge-tts
+  // MiniMax TTS API
   const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY;
   if (!MINIMAX_API_KEY) { return res.status(500).json({ error: 'MINIMAX_API_KEY not configured' }); }
 
-  // MiniMax TTS v1 API
   const postData = JSON.stringify({
     model: 'speech-01',
     text: text,
@@ -231,53 +244,56 @@ app.post('/api/tts', (req, res) => {
     timeout: 30000
   };
 
-  const ttsReq = https.request(options, (ttsRes) => {
-    const chunks = [];
-    ttsRes.on('data', (chunk) => chunks.push(chunk));
-    ttsRes.on('end', () => {
-      const body = Buffer.concat(chunks).toString();
-      if (ttsRes.statusCode !== 200) {
-        console.error('MiniMax TTS error status=' + ttsRes.statusCode + ' body=' + body);
-        return res.status(500).json({ error: 'TTS failed: ' + ttsRes.statusCode + ' ' + body.substring(0, 200) });
-      }
-      try {
-        const resp = JSON.parse(body);
-        if (resp.data && resp.data.binary) {
-          // MP3 base64 encoded
-          const mp3Buffer = Buffer.from(resp.data.binary, 'base64');
-          fs.writeFileSync(outputFile, mp3Buffer);
-          res.json({ success: true, fileName, filePath: outputFile });
-        } else {
-          console.error('MiniMax TTS unexpected response:', body.substring(0, 300));
-          res.status(500).json({ error: 'TTS response format error' });
-        }
-      } catch(e) {
-        console.error('MiniMax TTS parse error:', e.message, 'body:', body.substring(0, 300));
-        res.status(500).json({ error: 'TTS parse error: ' + e.message });
-      }
-    });
-  });
-
-  ttsReq.on('timeout', () => { console.error('MiniMax TTS timeout'); ttsReq.destroy(); res.status(500).json({ error: 'TTS timeout' }); });
-  ttsReq.on('error', (err) => { console.error('TTS request error:', err.message); res.status(500).json({ error: 'TTS request failed: ' + err.message }); });
-  ttsReq.write(postData);
-  ttsReq.end();
-});
-
-app.get('/api/voices/:fileName', (req, res) => {
-  const fileName = req.params.fileName;
-  const filePath = path.join(VOICES_DIR, fileName);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-  res.download(filePath);
-});
-
-app.get('/api/voices', (req, res) => {
   try {
-    const files = fs.readdirSync(VOICES_DIR).filter(f => f.endsWith('.mp3'))
-      .map(f => { const stat = fs.statSync(path.join(VOICES_DIR, f)); return { name: f, size: stat.size, created: stat.birthtime }; })
-      .sort((a, b) => b.created - a.created);
-    res.json({ files });
-  } catch (e) { res.status(500).json({ error: 'Cannot read voices directory' }); }
+    const ttsRes = await new Promise((resolve, reject) => {
+      const ttsReq = https.request(options, (r) => resolve(r));
+      ttsReq.on('timeout', () => reject(new Error('TTS timeout')));
+      ttsReq.on('error', reject);
+      ttsReq.write(postData);
+      ttsReq.end();
+    });
+
+    const chunks = [];
+    ttsRes.on('data', chunk => chunks.push(chunk));
+    const body = await new Promise((resolve, reject) => {
+      ttsRes.on('end', () => resolve(Buffer.concat(chunks)));
+      ttsRes.on('error', reject);
+    });
+
+    if (ttsRes.statusCode !== 200) {
+      console.error('MiniMax TTS error status=' + ttsRes.statusCode + ' body=' + body.toString().substring(0, 200));
+      return res.status(500).json({ error: 'TTS failed: ' + ttsRes.statusCode });
+    }
+
+    const resp = JSON.parse(body.toString());
+    if (!resp.data || !resp.data.binary) {
+      console.error('MiniMax TTS unexpected response:', body.toString().substring(0, 300));
+      return res.status(500).json({ error: 'TTS response format error' });
+    }
+
+    const mp3Buffer = Buffer.from(resp.data.binary, 'base64');
+
+    // 上传到 R2（替代本地存储）
+    await uploadToR2(fileName, mp3Buffer, 'audio/mpeg');
+
+    // 返回 presigned URL（7天有效），前端可直接播放
+    const presignedUrl = await getR2PresignedUrl(fileName);
+    res.json({ success: true, fileName, voiceUrl: presignedUrl });
+
+  } catch (err) {
+    console.error('TTS error:', err.message);
+    res.status(500).json({ error: 'TTS failed: ' + err.message });
+  }
+});
+
+// 获取语音文件 presigned URL（R2）
+app.get('/api/voices/:fileName', async (req, res) => {
+  try {
+    const url = await getR2PresignedUrl(req.params.fileName);
+    res.json({ url });
+  } catch (e) {
+    res.status(500).json({ error: 'Cannot generate URL: ' + e.message });
+  }
 });
 
 app.get('/api/users', (req, res) => { res.json({ users: loadUsers() }); });
