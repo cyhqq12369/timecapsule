@@ -15,6 +15,7 @@ const PORT = process.env.PORT || 3000;
 const CAPSULES_FILE = path.join(__dirname, 'capsules.json');
 const FEEDBACK_FILE = path.join(__dirname, 'feedback.json');
 const USERS_FILE = path.join(__dirname, 'users.json');
+const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 app.use(express.json({ limit: '10mb' }));
@@ -46,8 +47,13 @@ async function getR2PresignedUrl(fileName, expiresIn = 604800) {
   return getSignedUrl(R2_CLIENT, command, { expiresIn });
 }
 
-// ============ 内存存储 ============
-const sessions = new Map();
+// ============ Session 持久化存储（文件）==========
+function loadSessions() {
+  if (!fs.existsSync(SESSIONS_FILE)) { fs.writeFileSync(SESSIONS_FILE, JSON.stringify({})); return new Map(); }
+  try { const obj = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8')); const map = new Map(); for (const [k, v] of Object.entries(obj)) map.set(k, v); return map; } catch (e) { return new Map(); }
+}
+function saveSessions() { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions))); }
+const sessions = loadSessions();
 
 function safeFilename(str) {
   return (str || '').trim().replace(/[\/\\:*?"<>|]/g, '_');
@@ -91,7 +97,7 @@ app.post('/api/register', (req, res) => {
   if (existing) { return res.status(400).json({ error: '该手机号已注册，请直接登录' }); }
   saveUser({ phone, password, wechatContact: wechatContact || '' });
   const token = uuidv4();
-  sessions.set(token, { phone, wechatContact: wechatContact || '', createdAt: new Date().toISOString() });
+  sessions.set(token, { phone, wechatContact: wechatContact || '', createdAt: new Date().toISOString() }); saveSessions();
   res.json({ success: true, token, phone });
 });
 
@@ -102,7 +108,7 @@ app.post('/api/login', (req, res) => {
   if (!user) { return res.status(400).json({ error: '该手机号未注册，请先注册' }); }
   if (user.password !== password) { return res.status(400).json({ error: '密码错误' }); }
   const token = uuidv4();
-  sessions.set(token, { phone, wechatContact: wechatContact || user.wechatContact || '', createdAt: new Date().toISOString() });
+  sessions.set(token, { phone, wechatContact: wechatContact || user.wechatContact || '', createdAt: new Date().toISOString() }); saveSessions();
   saveUser({ phone, password: user.password, wechatContact: wechatContact || user.wechatContact || '', lastLogin: new Date().toISOString() });
   res.json({ success: true, token, phone });
 });
@@ -117,7 +123,7 @@ app.get('/api/me', (req, res) => {
 
 app.post('/api/logout', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
-  if (token) sessions.delete(token);
+  if (token) { sessions.delete(token); saveSessions(); }
   res.json({ success: true });
 });
 
