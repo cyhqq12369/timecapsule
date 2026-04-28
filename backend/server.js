@@ -225,74 +225,31 @@ app.post('/api/tts', async (req, res) => {
     fileName = `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
   }
 
-  // MiniMax TTS API
-  const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY;
-  if (!MINIMAX_API_KEY) { return res.status(500).json({ error: 'MINIMAX_API_KEY not configured' }); }
+  // ============ Edge TTS（免费，无需API Key）===========
+  const { exec } = require('child_process');
+  const voicesDir = '/app/voices';
+  const localFilePath = path.join(voicesDir, fileName);
 
-  const postData = JSON.stringify({
-    model: 'speech-01',
-    text: text,
-    stream: false,
-    voice_setting: {
-      voice_id: 'male-qn-qingse',
-      speed: 1.0,
-      volume: 1.0,
-      pitch: 0
-    }
+  // 确保目录存在（Railway挂载的Volume）
+  if (!fs.existsSync(voicesDir)) { fs.mkdirSync(voicesDir, { recursive: true }); }
+
+  // 调用 edge-tts 生成音频
+  await new Promise((resolve, reject) => {
+    exec(`edge-tts --voice zh-CN-XiaoxiaoNeural --rate='+0%' --volume='+0%' --pitch='+0Hz' --text=${JSON.stringify(text)} --audio-output=${localFilePath}`,
+      (err, stdout, stderr) => {
+        if (err) { console.error('edge-tts error:', stderr); reject(new Error('edge-tts failed: ' + stderr)); return; }
+        resolve();
+      }
+    );
   });
 
-  const options = {
-    hostname: 'api.minimax.chat',
-    path: '/v1/t2a',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + MINIMAX_API_KEY,
-      'Content-Length': Buffer.byteLength(postData)
-    },
-    timeout: 30000
-  };
+  // 读取生成的MP3文件并上传R2
+  const mp3Buffer = fs.readFileSync(localFilePath);
+  await uploadToR2(fileName, mp3Buffer, 'audio/mpeg');
 
-  try {
-    const ttsRes = await new Promise((resolve, reject) => {
-      const ttsReq = https.request(options, (r) => resolve(r));
-      ttsReq.on('timeout', () => reject(new Error('TTS timeout')));
-      ttsReq.on('error', reject);
-      ttsReq.write(postData);
-      ttsReq.end();
-    });
-
-    const chunks = [];
-    ttsRes.on('data', chunk => chunks.push(chunk));
-    const body = await new Promise((resolve, reject) => {
-      ttsRes.on('end', () => resolve(Buffer.concat(chunks)));
-      ttsRes.on('error', reject);
-    });
-
-    if (ttsRes.statusCode !== 200) {
-      console.error('MiniMax TTS error status=' + ttsRes.statusCode + ' body=' + body.toString().substring(0, 200));
-      return res.status(500).json({ error: 'TTS failed: ' + ttsRes.statusCode });
-    }
-
-    const resp = JSON.parse(body.toString());
-    if (!resp.data || !resp.data.binary) {
-      console.error('MiniMax TTS unexpected response:', body.toString().substring(0, 300));
-      return res.status(500).json({ error: 'TTS response format error' });
-    }
-
-    const mp3Buffer = Buffer.from(resp.data.binary, 'base64');
-
-    // 上传到 R2（替代本地存储）
-    await uploadToR2(fileName, mp3Buffer, 'audio/mpeg');
-
-    // 返回 presigned URL（7天有效），前端可直接播放
-    const presignedUrl = await getR2PresignedUrl(fileName);
-    res.json({ success: true, fileName, voiceUrl: presignedUrl });
-
-  } catch (err) {
-    console.error('TTS error:', err.message);
-    res.status(500).json({ error: 'TTS failed: ' + err.message });
-  }
+  // 返回 presigned URL（7天有效），前端可直接播放
+  const presignedUrl = await getR2PresignedUrl(fileName);
+  res.json({ success: true, fileName, voiceUrl: presignedUrl });
 });
 
 // 获取语音文件 presigned URL（R2）
