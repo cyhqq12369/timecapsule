@@ -1,9 +1,7 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS",
-    "buildCommand": "cd backend && npm install",
-    "startCommand": "cd backend && PORT=3000 node server.js"
+    "buildCommand": "cd backend && npm install && pip install --no-cache-dir edge-tts"
   },
   "deploy": {
     "numReplicas": 1,
