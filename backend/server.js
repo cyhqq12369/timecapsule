@@ -300,7 +300,10 @@ app.get('/api/voices/:fileName', async (req, res) => {
 
 app.get('/api/users', (req, res) => { res.json({ users: loadUsers() }); });
 
-app.get('/', (req, res) => { res.sendFile(path.join(PUBLIC_DIR, 'index.html')); });
+app.get('/', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+});
 
 const HOST = process.env.HOST || '0.0.0.0';
 app.listen(PORT, HOST, () => { console.log('时光宝盒 server running on http://' + HOST + ':' + PORT + ' (env PORT=' + process.env.PORT + ')'); });
