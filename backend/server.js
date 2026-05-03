@@ -225,27 +225,48 @@ app.post('/api/tts', async (req, res) => {
     fileName = `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
   }
 
-  // ============ Edge TTS（免费，无需API Key）===========
-  const { exec } = require('child_process');
-  const voicesDir = '/app/voices';
-  const localFilePath = path.join(voicesDir, fileName);
+  // ============ MiniMax TTS API（生产环境使用）===========
+  const minimaxApiKey = process.env.MINIMAX_API_KEY;
+  if (!minimaxApiKey) { return res.status(500).json({ error: 'MiniMax API Key 未配置' }); }
 
-  // 确保目录存在（Railway挂载的Volume）
-  if (!fs.existsSync(voicesDir)) { fs.mkdirSync(voicesDir, { recursive: true }); }
+  const ttsRequestBody = {
+    model: "speech-02-hd",
+    text: text,
+    stream: false,
+    voice_setting: {
+      voice_id: "male-qn-qingse"
+    }
+  };
 
-  // 调用 edge-tts 生成音频
-  await new Promise((resolve, reject) => {
-    exec(`edge-tts --voice zh-CN-XiaoxiaoNeural --rate='+0%' --volume='+0%' --pitch='+0Hz' --text=${JSON.stringify(text)} --audio-output=${localFilePath}`,
-      (err, stdout, stderr) => {
-        if (err) { console.error('edge-tts error:', stderr); reject(new Error('edge-tts failed: ' + stderr)); return; }
-        resolve();
+  const ttsData = await new Promise((resolve, reject) => {
+    const url = new URL("https://api.minimax.io/v1/t2a_v2");
+    const options = {
+      hostname: url.hostname,
+      path: url.pathname,
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${minimaxApiKey}`,
+        "Content-Type": "application/json"
       }
-    );
+    };
+    const ttsReq = https.request(options, (ttsRes) => {
+      const chunks = [];
+      ttsRes.on("data", chunk => chunks.push(chunk));
+      ttsRes.on("end", () => {
+        if (ttsRes.statusCode && ttsRes.statusCode >= 400) {
+          reject(new Error(`MiniMax TTS API error: ${ttsRes.statusCode} - ${Buffer.concat(chunks).toString()}`));
+        } else {
+          resolve(Buffer.concat(chunks));
+        }
+      });
+    });
+    ttsReq.on("error", reject);
+    ttsReq.write(JSON.stringify(ttsRequestBody));
+    ttsReq.end();
   });
 
-  // 读取生成的MP3文件并上传R2
-  const mp3Buffer = fs.readFileSync(localFilePath);
-  await uploadToR2(fileName, mp3Buffer, 'audio/mpeg');
+  // 上传到 R2
+  await uploadToR2(fileName, ttsData, 'audio/mpeg');
 
   // 返回 presigned URL（7天有效），前端可直接播放
   const presignedUrl = await getR2PresignedUrl(fileName);
