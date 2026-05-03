@@ -225,48 +225,31 @@ app.post('/api/tts', async (req, res) => {
     fileName = `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
   }
 
-  // ============ MiniMax TTS API（生产环境使用）===========
-  const minimaxApiKey = process.env.MINIMAX_API_KEY;
-  if (!minimaxApiKey) { return res.status(500).json({ error: 'MiniMax API Key 未配置' }); }
+  // ============ espeak-ng TTS（Linux 免费，无需 API Key）===========
+  const { exec: execSync } = require('child_process');
+  const voicesDir = '/app/voices';
+  const localFilePath = path.join(voicesDir, fileName);
 
-  const ttsRequestBody = {
-    model: "speech-02-hd",
-    text: text,
-    stream: false,
-    voice_setting: {
-      voice_id: "male-qn-qingse"
-    }
-  };
+  // 确保目录存在
+  if (!fs.existsSync(voicesDir)) { fs.mkdirSync(voicesDir, { recursive: true }); }
 
-  const ttsData = await new Promise((resolve, reject) => {
-    const url = new URL("https://api.minimax.io/v1/t2a_v2");
-    const options = {
-      hostname: url.hostname,
-      path: url.pathname,
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${minimaxApiKey}`,
-        "Content-Type": "application/json"
-      }
-    };
-    const ttsReq = https.request(options, (ttsRes) => {
-      const chunks = [];
-      ttsRes.on("data", chunk => chunks.push(chunk));
-      ttsRes.on("end", () => {
-        if (ttsRes.statusCode && ttsRes.statusCode >= 400) {
-          reject(new Error(`MiniMax TTS API error: ${ttsRes.statusCode} - ${Buffer.concat(chunks).toString()}`));
-        } else {
-          resolve(Buffer.concat(chunks));
-        }
-      });
+  // 调用 espeak-ng 生成 WAV，再转 MP3（espeak-ng 输出 WAV）
+  await new Promise((resolve, reject) => {
+    const wavPath = localFilePath.replace('.mp3', '.wav');
+    // Windows/macOS 本地开发用 say 命令，Railway Linux 用 espeak-ng
+    const isLinux = process.env.RAILWAY || process.env.NODE_ENV === 'production';
+    const cmd = isLinux
+      ? `espeak-ng -w "${wavPath}" -v zh "${text.replace(/"/g, '\"')}" && ffmpeg -y -i "${wavPath}" -codec:a libmp3lame -q:a 2 "${localFilePath}" && rm -f "${wavPath}"`
+      : `say -o "${localFilePath}" --audio-quality=High "${text}"`;
+    execSync(cmd, (err, stdout, stderr) => {
+      if (err) { console.error('TTS error:', stderr); reject(new Error('TTS failed: ' + stderr)); return; }
+      resolve();
     });
-    ttsReq.on("error", reject);
-    ttsReq.write(JSON.stringify(ttsRequestBody));
-    ttsReq.end();
   });
 
   // 上传到 R2
-  await uploadToR2(fileName, ttsData, 'audio/mpeg');
+  const mp3Buffer = fs.readFileSync(localFilePath);
+  await uploadToR2(fileName, mp3Buffer, 'audio/mpeg');
 
   // 返回 presigned URL（7天有效），前端可直接播放
   const presignedUrl = await getR2PresignedUrl(fileName);

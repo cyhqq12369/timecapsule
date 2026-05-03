@@ -453,7 +453,7 @@
             const audio = new Audio(url); audio.play();
             audio.onended = () => { URL.revokeObjectURL(url); this.ttsLoading = null; };
             this.showToast('语音已生成：' + data.fileName);
-          } catch (e) { this.showToast('朗读失败，请检查 edge-tts 是否安装'); this.ttsLoading = null; }
+          } catch (e) { this.showToast('朗读失败，请稍后重试'); this.ttsLoading = null; }
         },
         async startCheck() {
           const check = async () => {
