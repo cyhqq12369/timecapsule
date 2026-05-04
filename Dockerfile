@@ -1,8 +1,9 @@
 FROM node:20-alpine
 WORKDIR /app
 
-# 安装 espeak-ng（中文TTS）和 ffmpeg（WAV转MP3）
-RUN apk add --no-cache espeak-ng ffmpeg
+# Python3 + pip + ffmpeg（gTTS 免费无需API Key）
+RUN apk add --no-cache python3 ffmpeg && \
+    python3 -m pip install --break-system-packages gtts
 
 COPY backend/package.json ./
 RUN npm install --production

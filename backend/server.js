@@ -225,7 +225,7 @@ app.post('/api/tts', async (req, res) => {
     fileName = `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
   }
 
-  // ============ espeak-ng TTS（Linux 免费，无需 API Key）===========
+  // ============ gTTS TTS（Linux 免费，无需 API Key）===========
   const { exec: execSync } = require('child_process');
   const voicesDir = '/app/voices';
   const localFilePath = path.join(voicesDir, fileName);
@@ -233,16 +233,25 @@ app.post('/api/tts', async (req, res) => {
   // 确保目录存在
   if (!fs.existsSync(voicesDir)) { fs.mkdirSync(voicesDir, { recursive: true }); }
 
-  // 调用 espeak-ng 生成 WAV，再转 MP3（espeak-ng 输出 WAV）
+  // 调用 gTTS Python 脚本生成 MP3
   await new Promise((resolve, reject) => {
-    const wavPath = localFilePath.replace('.mp3', '.wav');
-    // Windows/macOS 本地开发用 say 命令，Railway Linux 用 espeak-ng
     const isLinux = process.env.RAILWAY || process.env.NODE_ENV === 'production';
-    const cmd = isLinux
-      ? `espeak-ng -w "${wavPath}" -v zh "${text.replace(/"/g, '\"')}" && ffmpeg -y -i "${wavPath}" -codec:a libmp3lame -q:a 2 "${localFilePath}" && rm -f "${wavPath}"`
-      : `say -o "${localFilePath}" --audio-quality=High "${text}"`;
+    if (!isLinux) {
+      // macOS/Windows 本地开发用 say 命令
+      execSync(`say -o "${localFilePath}" --audio-quality=High "${text.replace(/"/g, '\"')}"`, { timeout: 30000 }, (err, stdout, stderr) => {
+        if (err) { console.error('TTS error:', stderr); reject(new Error('TTS failed: ' + stderr)); return; }
+        resolve();
+      });
+      return;
+    }
+    // Railway Linux 用 gTTS（通过 Python 脚本调用）
+    const scriptPath = path.join(__dirname, 'tts_worker.py');
+    const cmd = `python3 "${scriptPath}" "${text.replace(/"/g, '\"')}" "${localFilePath}"`;
+    console.log('TTS cmd:', cmd);
     execSync(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
       if (err) { console.error('TTS error:', stderr); reject(new Error('TTS failed: ' + stderr)); return; }
+      console.log('TTS stdout:', stdout);
+      if (!fs.existsSync(localFilePath)) { reject(new Error('TTS output file not created: ' + localFilePath)); return; }
       resolve();
     });
   });
