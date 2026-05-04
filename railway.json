@@ -1,7 +1,7 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
-    "buildCommand": "cd backend && npm install && pip install --no-cache-dir edge-tts"
+    "buildCommand": "cd backend && npm install"
   },
   "deploy": {
     "numReplicas": 1,
