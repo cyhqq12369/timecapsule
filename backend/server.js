@@ -284,3 +284,40 @@ app.get('/', (req, res) => {
 
 const HOST = process.env.HOST || '0.0.0.0';
 app.listen(PORT, HOST, () => { console.log('时光宝盒 server running on http://' + HOST + ':' + PORT + ' (env PORT=' + process.env.PORT + ')'); });
+
+// DEBUG endpoint - test TTS directly
+app.post('/api/tts-test', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token || !sessions.has(token)) { return res.status(401).json({ error: '请先登录' }); }
+  
+  const { exec: execSync } = require('child_process');
+  const testText = '测试';
+  const testFile = '/tmp/tts_test_debug.mp3';
+  const scriptPath = path.join(__dirname, 'tts_worker.py');
+  
+  console.log('=== TTS DEBUG START ===');
+  console.log('script exists:', fs.existsSync(scriptPath));
+  console.log('python3 version:');
+  execSync('python3 --version', { timeout: 5000 }, (err, stdout, stderr) => {
+    console.log('python stdout:', stdout, 'stderr:', stderr);
+  });
+  
+  const cmd = `python3 "${scriptPath}" "测试" "${testFile}"`;
+  console.log('cmd:', cmd);
+  
+  execSync(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
+    console.log('exec err:', err);
+    console.log('exec stdout:', stdout);
+    console.log('exec stderr:', stderr);
+    console.log('file exists:', fs.existsSync(testFile));
+    if (fs.existsSync(testFile)) {
+      console.log('file size:', fs.statSync(testFile).size);
+    }
+    console.log('=== TTS DEBUG END ===');
+    if (err) {
+      res.json({ error: 'TTS failed', stderr });
+    } else {
+      res.json({ success: true, stdout, fileExists: fs.existsSync(testFile) });
+    }
+  });
+});
