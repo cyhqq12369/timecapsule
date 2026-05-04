@@ -241,7 +241,7 @@ app.post('/api/tts', async (req, res) => {
     const cmd = isLinux
       ? `espeak-ng -w "${wavPath}" -v zh "${text.replace(/"/g, '\"')}" && ffmpeg -y -i "${wavPath}" -codec:a libmp3lame -q:a 2 "${localFilePath}" && rm -f "${wavPath}"`
       : `say -o "${localFilePath}" --audio-quality=High "${text}"`;
-    execSync(cmd, (err, stdout, stderr) => {
+    execSync(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
       if (err) { console.error('TTS error:', stderr); reject(new Error('TTS failed: ' + stderr)); return; }
       resolve();
     });
