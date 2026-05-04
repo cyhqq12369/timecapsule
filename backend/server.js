@@ -225,47 +225,60 @@ app.post('/api/tts', async (req, res) => {
     fileName = `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
   }
 
-  // ============ gTTS TTS（Linux 免费，无需 API Key）===========
-  const { exec: execSync } = require('child_process');
+  // ============ gTTS TTS（异步模式，避免 Railway 健康检查超时）===========
+  const { exec } = require('child_process');
   const voicesDir = '/app/voices';
   const localFilePath = path.join(voicesDir, fileName);
+  const jobId = uuidv4();
 
   // 确保目录存在
   if (!fs.existsSync(voicesDir)) { fs.mkdirSync(voicesDir, { recursive: true }); }
 
-  // 调用 gTTS Python 脚本生成 MP3
-  await new Promise((resolve, reject) => {
-    const isLinux = process.env.RAILWAY || process.env.NODE_ENV === 'production';
-    if (!isLinux) {
-      // macOS/Windows 本地开发用 say 命令
-      execSync(`say -o "${localFilePath}" --audio-quality=High "${text.replace(/"/g, '\"')}"`, { timeout: 30000 }, (err, stdout, stderr) => {
-        if (err) { console.error('TTS error:', stderr); reject(new Error('TTS failed: ' + stderr)); return; }
-        resolve();
-      });
+  // 立即返回，让前端知道 TTS 正在生成中
+  res.json({ status: 'generating', jobId, message: '语音生成中，请稍后刷新重试' });
+
+  // 在后台异步执行 TTS，不阻塞响应
+  const isLinux = process.env.RAILWAY || process.env.NODE_ENV === 'production';
+  let cmd;
+  if (!isLinux) {
+    // macOS/Windows 本地开发用 say 命令
+    cmd = `say -o "${localFilePath}" --audio-quality=High "${text.replace(/"/g, '\"')}"`;
+  } else {
+    // Railway Linux 用 gTTS
+    const scriptPath = path.join(__dirname, 'tts_worker.py');
+    cmd = `python3 "${scriptPath}" "${text.replace(/"/g, '\"')}" "${localFilePath}"`;
+  }
+  console.log('[TTS async job', jobId, '] cmd:', cmd);
+
+  // fire-and-forget：后台执行，不等待结果
+  exec(cmd, { timeout: 60000 }, (err, stdout, stderr) => {
+    if (err) {
+      console.error('[TTS job', jobId, '] error:', stderr);
       return;
     }
-    // Railway Linux 用 gTTS（通过 Python 脚本调用）
-    const scriptPath = path.join(__dirname, 'tts_worker.py');
-    const cmd = `python3 "${scriptPath}" "${text.replace(/"/g, '\"')}" "${localFilePath}"`;
-    console.log('TTS cmd:', cmd);
-    execSync(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
-      if (err) { console.error('TTS error:', stderr); reject(new Error('TTS failed: ' + stderr)); return; }
-      console.log('TTS stdout:', stdout);
-      if (!fs.existsSync(localFilePath)) { reject(new Error('TTS output file not created: ' + localFilePath)); return; }
-      resolve();
-    });
+    console.log('[TTS job', jobId, '] done, stdout:', stdout);
+
+    // TTS 生成完成后检查文件
+    if (!fs.existsSync(localFilePath)) {
+      console.error('[TTS job', jobId, '] file not created:', localFilePath);
+      return;
+    }
+
+    // 上传到 R2
+    try {
+      const mp3Buffer = fs.readFileSync(localFilePath);
+      uploadToR2(fileName, mp3Buffer, 'audio/mpeg').then(() => {
+        console.log('[TTS job', jobId, '] uploaded to R2:', fileName);
+      }).catch(e => {
+        console.error('[TTS job', jobId, '] R2 upload error:', e.message);
+      });
+    } catch (e) {
+      console.error('[TTS job', jobId, '] read file error:', e.message);
+    }
   });
 
-  // 上传到 R2
-  const mp3Buffer = fs.readFileSync(localFilePath);
-  await uploadToR2(fileName, mp3Buffer, 'audio/mpeg');
-
-  // 返回 presigned URL（7天有效），前端可直接播放
-  const presignedUrl = await getR2PresignedUrl(fileName);
-  res.json({ success: true, fileName, voiceUrl: presignedUrl });
-});
-
-// 获取语音文件 presigned URL（R2）
+  // API 已返回，后续处理在后台进行
+  return;// 获取语音文件 presigned URL（R2）
 app.get('/api/voices/:fileName', async (req, res) => {
   try {
     const url = await getR2PresignedUrl(req.params.fileName);
