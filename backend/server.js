@@ -256,22 +256,24 @@ app.post('/api/tts', async (req, res) => {
       return res.status(500).json({ error: 'TTS file not created' });
     }
 
-    // 上传到 R2（持久化存储），10秒超时
+    // 先返回 base64 给前端（用户立刻能听）
     const mp3Buffer = fs.readFileSync(localFilePath);
-    try {
-      await Promise.race([
-        uploadToR2(fileName, mp3Buffer, 'audio/mpeg'),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('R2 upload timeout (10s)')), 10000))
-      ]);
-      console.log('[TTS job', jobId, '] uploaded to R2:', fileName);
-      return res.json({ success: true, fileName, message: '语音生成成功' });
-    } catch (r2err) {
-      // R2 上传失败时返回 base64 data URL 作为降级方案
-      const base64Audio = mp3Buffer.toString('base64');
-      const dataUrl = `data:audio/mpeg;base64,${base64Audio}`;
-      console.warn('[TTS job', jobId, '] R2 failed, fallback to dataUrl. Error:', r2err.message);
-      return res.json({ success: true, audioUrl: dataUrl, message: '语音生成成功（R2降级）' });
-    }
+    const base64Audio = mp3Buffer.toString('base64');
+    const dataUrl = `data:audio/mpeg;base64,${base64Audio}`;
+    res.json({ success: true, audioUrl: dataUrl, message: '语音生成成功' });
+
+    // 后台异步上传 R2（可选持久化，不阻塞响应）
+    (async () => {
+      try {
+        await Promise.race([
+          uploadToR2(fileName, mp3Buffer, 'audio/mpeg'),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('R2 timeout (30s)')), 30000))
+        ]);
+        console.log('[TTS job', jobId, '] uploaded to R2:', fileName);
+      } catch (r2err) {
+        console.warn('[TTS job', jobId, '] R2 upload failed (non-blocking):', r2err.message);
+      }
+    })();
   } catch (err) {
     console.error('[TTS job', jobId, '] error:', err.message);
     return res.status(500).json({ error: 'TTS failed: ' + err.message });
