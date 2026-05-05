@@ -266,7 +266,7 @@ app.post('/api/tts', async (req, res) => {
       // R2 上传失败时返回 base64 data URL 作为降级方案
       const base64Audio = mp3Buffer.toString('base64');
       const dataUrl = `data:audio/mpeg;base64,${base64Audio}`;
-      console.warn('[TTS job', jobId, '] R2 failed, using dataUrl fallback:', r2err.message);
+      console.warn('[TTS job', jobId, '] R2 upload failed, fallback to dataUrl. Error:', r2err.message, '| Code:', r2err.code, '| Status:', r2err.$metadata);
       return res.json({ success: true, audioUrl: dataUrl, message: '语音生成成功（R2降级）' });
     }
   } catch (err) {
