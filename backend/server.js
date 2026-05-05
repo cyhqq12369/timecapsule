@@ -151,7 +151,8 @@ app.post('/api/capsule', (req, res) => {
   const capsule = {
     id: uuidv4(), phone: session.phone, wechatContact: session.wechatContact,
     from, to, message, voiceText: voiceText || null,
-    deliveryDate, createdAt: new Date().toISOString(), delivered: false
+    deliveryDate, createdAt: new Date().toISOString(), delivered: false,
+    audioData: null  // 语音base64，生成后存入
   };
   const capsules = loadCapsules();
   capsules.push(capsule);
@@ -262,22 +263,53 @@ app.post('/api/tts', async (req, res) => {
     const dataUrl = `data:audio/mpeg;base64,${base64Audio}`;
     res.json({ success: true, audioUrl: dataUrl, message: '语音生成成功' });
 
-    // 后台异步上传 R2（可选持久化，不阻塞响应）
-    (async () => {
-      try {
-        await Promise.race([
-          uploadToR2(fileName, mp3Buffer, 'audio/mpeg'),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('R2 timeout (30s)')), 30000))
-        ]);
-        console.log('[TTS job', jobId, '] uploaded to R2:', fileName);
-      } catch (r2err) {
-        console.warn('[TTS job', jobId, '] R2 upload failed (non-blocking):', r2err.message);
+    // 后台：把音频base64存入对应胶囊记录（持久化到capsules.json）
+    if (capsuleId) {
+      const capsules = loadCapsules();
+      const cap = capsules.find(c => c.id === capsuleId);
+      if (cap) {
+        cap.audioData = base64Audio;
+        saveCapsules(capsules);
+        console.log('[TTS job', jobId, '] audio saved to capsule:', capsuleId);
       }
-    })();
+    }
   } catch (err) {
     console.error('[TTS job', jobId, '] error:', err.message);
     return res.status(500).json({ error: 'TTS failed: ' + err.message });
   }
+});
+
+
+// ============ 管理员：获取用户胶囊音频 ============
+app.get('/api/admin/capsule/:id/audio', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  // 简单的密码验证（生产环境应更严格）
+  const adminPassword = req.headers['x-admin-password'] || req.query.password;
+  if (adminPassword !== (process.env.ADMIN_PASSWORD || 'admin123')) {
+    return res.status(403).json({ error: '无权限' });
+  }
+  const capsules = loadCapsules();
+  const capsule = capsules.find(c => c.id === req.params.id);
+  if (!capsule) return res.status(404).json({ error: '胶囊不存在' });
+  if (!capsule.audioData) return res.status(404).json({ error: '该胶囊暂无语音' });
+  const buffer = Buffer.from(capsule.audioData, 'base64');
+  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Content-Disposition', `attachment; filename="voice_${capsule.from}_to_${capsule.to}.mp3"`);
+  res.send(buffer);
+});
+
+// ============ 管理员：查询所有胶囊列表 ============
+app.get('/api/admin/capsules', (req, res) => {
+  const adminPassword = req.headers['x-admin-password'] || req.query.password;
+  if (adminPassword !== (process.env.ADMIN_PASSWORD || 'admin123')) {
+    return res.status(403).json({ error: '无权限' });
+  }
+  const capsules = loadCapsules();
+  const list = capsules
+    .filter(c => c.audioData)  // 只返回有语音的
+    .map(c => ({ id: c.id, phone: c.phone, wechatContact: c.wechatContact, from: c.from, to: c.to, message: c.message, deliveryDate: c.deliveryDate, createdAt: c.createdAt, hasAudio: true }))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json({ capsules: list, total: list.length });
 });
 
 app.get('/api/voices/:fileName', async (req, res) => {
