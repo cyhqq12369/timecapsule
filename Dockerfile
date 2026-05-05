@@ -1,9 +1,9 @@
 FROM node:20-alpine
 WORKDIR /app
 
-# Python3 + pip + ffmpeg（gTTS 免费无需API Key）
+# Python3 + pip + ffmpeg + edge-tts（国内可访问，免费）
 RUN apk add --no-cache python3 ffmpeg py3-pip && \
-    python3 -m pip install --break-system-packages gtts
+    python3 -m pip install --break-system-packages edge-tts
 
 COPY backend/package.json ./
 RUN npm install --production
