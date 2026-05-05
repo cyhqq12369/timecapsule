@@ -446,13 +446,10 @@
           try {
             const res = await fetch('/api/tts', { method: 'POST', headers: this.authHeaders(), body: JSON.stringify({ text, capsuleId: capsule.id }) });
             const data = await res.json();
-            if (!res.ok || !data.success) throw new Error('TTS failed');
-            const audioRes = await fetch('/api/voices/' + encodeURIComponent(data.fileName));
-            const blob = await audioRes.blob();
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url); audio.play();
-            audio.onended = () => { URL.revokeObjectURL(url); this.ttsLoading = null; };
-            this.showToast('语音已生成：' + data.fileName);
+            if (!res.ok || !data.success || !data.audioUrl) throw new Error(data.error || 'TTS failed');
+            const audio = new Audio(data.audioUrl); audio.play();
+            audio.onended = () => { this.ttsLoading = null; };
+            this.showToast('语音已生成');
           } catch (e) { this.showToast('朗读失败，请稍后重试'); this.ttsLoading = null; }
         },
         async startCheck() {
