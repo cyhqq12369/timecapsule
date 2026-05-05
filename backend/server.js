@@ -256,14 +256,19 @@ app.post('/api/tts', async (req, res) => {
       return res.status(500).json({ error: 'TTS file not created' });
     }
 
-    // 直接读取生成的音频文件，返回base64给前端（避免R2依赖）
+    // 上传到 R2（持久化存储）
     const mp3Buffer = fs.readFileSync(localFilePath);
-    const base64Audio = mp3Buffer.toString('base64');
-    const dataUrl = `data:audio/mpeg;base64,${base64Audio}`;
-    console.log('[TTS job', jobId, '] generated, size:', mp3Buffer.length);
-
-    // 返回成功和data URL（前端直接播放）
-    return res.json({ success: true, audioUrl: dataUrl, message: '语音生成成功' });
+    try {
+      await uploadToR2(fileName, mp3Buffer, 'audio/mpeg');
+      console.log('[TTS job', jobId, '] uploaded to R2:', fileName);
+      return res.json({ success: true, fileName, message: '语音生成成功' });
+    } catch (r2err) {
+      // R2 上传失败时返回 base64 data URL 作为降级方案
+      const base64Audio = mp3Buffer.toString('base64');
+      const dataUrl = `data:audio/mpeg;base64,${base64Audio}`;
+      console.warn('[TTS job', jobId, '] R2 failed, using dataUrl fallback:', r2err.message);
+      return res.json({ success: true, audioUrl: dataUrl, message: '语音生成成功（R2降级）' });
+    }
   } catch (err) {
     console.error('[TTS job', jobId, '] error:', err.message);
     return res.status(500).json({ error: 'TTS failed: ' + err.message });

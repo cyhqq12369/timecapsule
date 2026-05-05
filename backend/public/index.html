@@ -446,9 +446,18 @@
           try {
             const res = await fetch('/api/tts', { method: 'POST', headers: this.authHeaders(), body: JSON.stringify({ text, capsuleId: capsule.id }) });
             const data = await res.json();
-            if (!res.ok || !data.success || !data.audioUrl) throw new Error(data.error || 'TTS failed');
-            const audio = new Audio(data.audioUrl); audio.play();
-            audio.onended = () => { this.ttsLoading = null; };
+            if (!res.ok || !data.success) throw new Error(data.error || 'TTS failed');
+            if (data.audioUrl) {
+              // 降级模式：直接播放 base64 data URL
+              const audio = new Audio(data.audioUrl); audio.play();
+              audio.onended = () => { this.ttsLoading = null; };
+            } else if (data.fileName) {
+              // 正常模式：从 R2 获取音频 URL 后播放
+              const voiceRes = await fetch('/api/voices/' + encodeURIComponent(data.fileName));
+              const voiceData = await voiceRes.json();
+              const audio = new Audio(voiceData.url); audio.play();
+              audio.onended = () => { this.ttsLoading = null; };
+            }
             this.showToast('语音已生成');
           } catch (e) { this.showToast('朗读失败，请稍后重试'); this.ttsLoading = null; }
         },
