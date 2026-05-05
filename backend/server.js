@@ -282,20 +282,23 @@ app.post('/api/tts', async (req, res) => {
 
 // ============ 管理员：获取用户胶囊音频 ============
 app.get('/api/admin/capsule/:id/audio', (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  // 简单的密码验证（生产环境应更严格）
   const adminPassword = req.headers['x-admin-password'] || req.query.password;
   if (adminPassword !== (process.env.ADMIN_PASSWORD || 'admin123')) {
     return res.status(403).json({ error: '无权限' });
   }
-  const capsules = loadCapsules();
-  const capsule = capsules.find(c => c.id === req.params.id);
-  if (!capsule) return res.status(404).json({ error: '胶囊不存在' });
-  if (!capsule.audioData) return res.status(404).json({ error: '该胶囊暂无语音' });
-  const buffer = Buffer.from(capsule.audioData, 'base64');
-  res.setHeader('Content-Type', 'audio/mpeg');
-  res.setHeader('Content-Disposition', `attachment; filename="voice_${capsule.from}_to_${capsule.to}.mp3"`);
-  res.send(buffer);
+  try {
+    const capsules = loadCapsules();
+    const capsule = capsules.find(c => c.id === req.params.id);
+    if (!capsule) return res.status(404).json({ error: '胶囊不存在' });
+    if (!capsule.audioData) return res.status(404).json({ error: '该胶囊暂无语音' });
+    const buffer = Buffer.from(capsule.audioData, 'base64');
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Disposition', `attachment; filename="voice.mp3"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('[/admin/capsule/audio]', err.message);
+    res.status(500).json({ error: '服务器错误: ' + err.message });
+  }
 });
 
 // ============ 管理员：查询所有胶囊列表 ============
