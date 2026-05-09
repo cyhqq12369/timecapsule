@@ -18,12 +18,58 @@ const CAPSULES_FILE = path.join(__dirname, 'capsules.json');
 const FEEDBACK_FILE = path.join(__dirname, 'feedback.json');
 const USERS_FILE = path.join(__dirname, 'users.json');
 const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
+const STATS_FILE = path.join(__dirname, 'stats.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(PUBLIC_DIR));
 
-// R2 Cloudflare 配置（环境变量注入，代码库不存 secrets）
+// ============ 统计功能 ===========
+function loadStats() {
+  if (!fs.existsSync(STATS_FILE)) {
+    const initial = {
+      pageViews: 0, registrations: 0, logins: 0,
+      capsulesCreated: 0, ttsGenerated: 0,
+      lastUpdated: new Date().toISOString(), history: []
+    };
+    fs.writeFileSync(STATS_FILE, JSON.stringify(initial));
+    return initial;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(STATS_FILE, 'utf-8'));
+  } catch (e) {
+    return { pageViews: 0, registrations: 0, logins: 0, capsulesCreated: 0, ttsGenerated: 0, lastUpdated: new Date().toISOString(), history: [] };
+  }
+}
+
+function saveStats(stats) {
+  stats.lastUpdated = new Date().toISOString();
+  fs.writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2));
+}
+
+function recordStat(type, detail) {
+  try {
+    const stats = loadStats();
+    if (stats[type] !== undefined) stats[type]++;
+    const entry = { type, detail: detail || '', ts: new Date().toISOString() };
+    stats.history = stats.history || [];
+    stats.history.unshift(entry);
+    if (stats.history.length > 500) stats.history = stats.history.slice(0, 500);
+    saveStats(stats);
+  } catch (e) {
+    console.error('[stats] recordStat error:', e.message);
+  }
+}
+
+// 页面访问统计中间件（跳过 API / favicon / voices）
+app.use((req, res, next) => {
+  if (req.path !== '/favicon.ico' && !req.path.startsWith('/api') && !req.path.startsWith('/voices')) {
+    recordStat('pageViews', req.path);
+  }
+  next();
+});
+
+// ============ R2 Cloudflare 配置 ============
 const R2_CLIENT = new S3Client({
   region: 'auto',
   endpoint: process.env.R2_ENDPOINT,
@@ -34,25 +80,25 @@ const R2_CLIENT = new S3Client({
 });
 const R2_BUCKET = process.env.R2_BUCKET || 'timecapsule-voices';
 
-async function uploadToR2(fileName, buffer, contentType = 'audio/mpeg') {
-  const command = new PutObjectCommand({
-    Bucket: R2_BUCKET,
-    Key: fileName,
-    Body: buffer,
-    ContentType: contentType,
-  });
+async function uploadToR2(fileName, buffer, contentType) {
+  const command = new PutObjectCommand({ Bucket: R2_BUCKET, Key: fileName, Body: buffer, ContentType: contentType || 'audio/mpeg' });
   await R2_CLIENT.send(command);
 }
 
-async function getR2PresignedUrl(fileName, expiresIn = 604800) {
+async function getR2PresignedUrl(fileName, expiresIn) {
   const command = new GetObjectCommand({ Bucket: R2_BUCKET, Key: fileName });
-  return getSignedUrl(R2_CLIENT, command, { expiresIn });
+  return getSignedUrl(R2_CLIENT, command, { expiresIn: expiresIn || 604800 });
 }
 
-// ============ Session 持久化存储（文件）==========
+// ============ Session 持久化存储 ===========
 function loadSessions() {
   if (!fs.existsSync(SESSIONS_FILE)) { fs.writeFileSync(SESSIONS_FILE, JSON.stringify({})); return new Map(); }
-  try { const obj = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8')); const map = new Map(); for (const [k, v] of Object.entries(obj)) map.set(k, v); return map; } catch (e) { return new Map(); }
+  try {
+    const obj = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8'));
+    const map = new Map();
+    for (const [k, v] of Object.entries(obj)) map.set(k, v);
+    return map;
+  } catch (e) { return new Map(); }
 }
 function saveSessions() { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions))); }
 const sessions = loadSessions();
@@ -79,9 +125,7 @@ function loadUsers() {
 }
 function saveUsers(users) { fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2)); }
 
-function getUser(phone) {
-  return loadUsers().find(u => u.phone === phone);
-}
+function getUser(phone) { return loadUsers().find(u => u.phone === phone); }
 function saveUser(userData) {
   const users = loadUsers();
   const idx = users.findIndex(u => u.phone === userData.phone);
@@ -92,6 +136,7 @@ function saveUser(userData) {
 
 // ============ 登录 API ============
 app.post('/api/register', (req, res) => {
+  recordStat('registrations', req.body.phone || '');
   const { phone, password, wechatContact } = req.body;
   if (!phone || !/^1\d{10}$/.test(phone)) { return res.status(400).json({ error: '请输入正确的11位手机号' }); }
   if (!password || password.length < 4) { return res.status(400).json({ error: '密码至少4位' }); }
@@ -104,6 +149,7 @@ app.post('/api/register', (req, res) => {
 });
 
 app.post('/api/login', (req, res) => {
+  recordStat('logins', req.body.phone || '');
   const { phone, password, wechatContact } = req.body;
   if (!phone || !password) { return res.status(400).json({ error: '手机号和密码不能为空' }); }
   const user = getUser(phone);
@@ -143,6 +189,7 @@ app.get('/api/feedback', (req, res) => { res.json({ feedback: loadFeedback() });
 
 // ============ 时光胶囊 ============
 app.post('/api/capsule', (req, res) => {
+  recordStat('capsulesCreated');
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token || !sessions.has(token)) { return res.status(401).json({ error: '请先登录' }); }
   const session = sessions.get(token);
@@ -151,8 +198,7 @@ app.post('/api/capsule', (req, res) => {
   const capsule = {
     id: uuidv4(), phone: session.phone, wechatContact: session.wechatContact,
     from, to, message, voiceText: voiceText || null,
-    deliveryDate, createdAt: new Date().toISOString(), delivered: false,
-    audioData: null  // 语音base64，生成后存入
+    deliveryDate, createdAt: new Date().toISOString(), delivered: false, audioData: null
   };
   const capsules = loadCapsules();
   capsules.push(capsule);
@@ -202,8 +248,9 @@ app.post('/api/capsule/:id/deliver', (req, res) => {
   res.json({ success: true, capsule: capsules[idx] });
 });
 
-// ============ TTS → R2 ============
+// ============ TTS ============
 app.post('/api/tts', async (req, res) => {
+  recordStat('ttsGenerated');
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token || !sessions.has(token)) { return res.status(401).json({ error: '请先登录' }); }
   const session = sessions.get(token);
@@ -214,64 +261,47 @@ app.post('/api/tts', async (req, res) => {
   const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
   const phoneStr = safeFilename(session.phone);
   const wechatStr = safeFilename(session.wechatContact || '未知微信');
-
-  let fileName;
-  if (capsuleId) {
-    const capsules = loadCapsules();
-    const capsule = capsules.find(c => c.id === capsuleId);
-    if (capsule) {
-      fileName = `${phoneStr}_${wechatStr}_${dateStr}_${safeFilename(capsule.from)}to${safeFilename(capsule.to)}.mp3`;
-    } else {
-      fileName = `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
-    }
-  } else {
-    fileName = `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
-  }
+  let fileName = capsuleId
+    ? (() => {
+        const capsules = loadCapsules();
+        const capsule = capsules.find(c => c.id === capsuleId);
+        return capsule
+          ? `${phoneStr}_${wechatStr}_${dateStr}_${safeFilename(capsule.from)}to${safeFilename(capsule.to)}.mp3`
+          : `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
+      })()
+    : `${phoneStr}_${wechatStr}_${dateStr}.mp3`;
 
   const voicesDir = '/app/voices';
   const localFilePath = path.join(voicesDir, fileName);
   const jobId = uuidv4();
-
-  // 确保目录存在
   if (!fs.existsSync(voicesDir)) { fs.mkdirSync(voicesDir, { recursive: true }); }
 
   const isLinux = process.env.RAILWAY || process.env.NODE_ENV === 'production';
   let cmd;
   if (!isLinux) {
-    // macOS/Windows 本地开发用 say 命令
     cmd = `say -o "${localFilePath}" --audio-quality=High "${text.replace(/"/g, '\"')}"`;
   } else {
-    // Railway Linux 用 gTTS
     const scriptPath = path.join(__dirname, 'tts_worker.py');
     cmd = `python3 "${scriptPath}" "${text.replace(/"/g, '\"')}" "${localFilePath}"`;
   }
   console.log('[TTS job', jobId, '] cmd:', cmd);
 
-  // 同步执行 TTS，等待生成完成
   try {
     const { stdout, stderr } = await execPromise(cmd, { timeout: 60000 });
     console.log('[TTS job', jobId, '] done, stdout:', stdout);
-
     if (!fs.existsSync(localFilePath)) {
       console.error('[TTS job', jobId, '] file not created:', localFilePath);
       return res.status(500).json({ error: 'TTS file not created' });
     }
-
-    // 先返回 base64 给前端（用户立刻能听）
     const mp3Buffer = fs.readFileSync(localFilePath);
     const base64Audio = mp3Buffer.toString('base64');
     const dataUrl = `data:audio/mpeg;base64,${base64Audio}`;
     res.json({ success: true, audioUrl: dataUrl, message: '语音生成成功' });
 
-    // 后台：把音频base64存入对应胶囊记录（持久化到capsules.json）
     if (capsuleId) {
       const capsules = loadCapsules();
       const cap = capsules.find(c => c.id === capsuleId);
-      if (cap) {
-        cap.audioData = base64Audio;
-        saveCapsules(capsules);
-        console.log('[TTS job', jobId, '] audio saved to capsule:', capsuleId);
-      }
+      if (cap) { cap.audioData = base64Audio; saveCapsules(capsules); }
     }
   } catch (err) {
     console.error('[TTS job', jobId, '] error:', err.message);
@@ -279,13 +309,10 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
-
-// ============ 管理员：获取用户胶囊音频 ============
+// ============ 管理员 API ============
 app.get('/api/admin/capsule/:id/audio', (req, res) => {
   const adminPassword = req.headers['x-admin-password'] || req.query.password;
-  if (adminPassword !== (process.env.ADMIN_PASSWORD || 'admin123')) {
-    return res.status(403).json({ error: '无权限' });
-  }
+  if (adminPassword !== (process.env.ADMIN_PASSWORD || 'admin123')) { return res.status(403).json({ error: '无权限' }); }
   try {
     const capsules = loadCapsules();
     const capsule = capsules.find(c => c.id === req.params.id);
@@ -295,36 +322,64 @@ app.get('/api/admin/capsule/:id/audio', (req, res) => {
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Content-Disposition', `attachment; filename="voice.mp3"`);
     res.send(buffer);
-  } catch (err) {
-    console.error('[/admin/capsule/audio]', err.message);
-    res.status(500).json({ error: '服务器错误: ' + err.message });
-  }
+  } catch (err) { res.status(500).json({ error: '服务器错误: ' + err.message }); }
 });
 
-// ============ 管理员：查询所有胶囊列表 ============
 app.get('/api/admin/capsules', (req, res) => {
   const adminPassword = req.headers['x-admin-password'] || req.query.password;
-  if (adminPassword !== (process.env.ADMIN_PASSWORD || 'admin123')) {
-    return res.status(403).json({ error: '无权限' });
-  }
+  if (adminPassword !== (process.env.ADMIN_PASSWORD || 'admin123')) { return res.status(403).json({ error: '无权限' }); }
   const capsules = loadCapsules();
   const list = capsules
-    .filter(c => c.audioData)  // 只返回有语音的
+    .filter(c => c.audioData)
     .map(c => ({ id: c.id, phone: c.phone, wechatContact: c.wechatContact, from: c.from, to: c.to, message: c.message, deliveryDate: c.deliveryDate, createdAt: c.createdAt, hasAudio: true }))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   res.json({ capsules: list, total: list.length });
 });
 
 app.get('/api/voices/:fileName', async (req, res) => {
-  try {
-    const url = await getR2PresignedUrl(req.params.fileName);
-    res.json({ url });
-  } catch (e) {
-    res.status(500).json({ error: 'Cannot generate URL: ' + e.message });
-  }
+  try { const url = await getR2PresignedUrl(req.params.fileName); res.json({ url }); }
+  catch (e) { res.status(500).json({ error: 'Cannot generate URL: ' + e.message }); }
 });
 
 app.get('/api/users', (req, res) => { res.json({ users: loadUsers() }); });
+
+// ============ 统计 API (管理员) ============
+app.get('/api/stats', (req, res) => {
+  const adminPassword = req.headers['x-admin-password'] || req.query.password;
+  if (adminPassword !== (process.env.ADMIN_PASSWORD || 'admin123')) { return res.status(403).json({ error: '无权限' }); }
+  const stats = loadStats();
+  const summary = {
+    pageViews: stats.pageViews,
+    registrations: stats.registrations,
+    logins: stats.logins,
+    capsulesCreated: stats.capsulesCreated,
+    ttsGenerated: stats.ttsGenerated,
+    lastUpdated: stats.lastUpdated,
+    recentHistory: (stats.history || []).slice(0, 50)
+  };
+  res.json(summary);
+});
+
+// ============ DEBUG TTS ============
+app.post('/api/tts-test', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token || !sessions.has(token)) { return res.status(401).json({ error: '请先登录' }); }
+  const { exec: execSync } = require('child_process');
+  const testFile = '/tmp/tts_test_debug.mp3';
+  const scriptPath = path.join(__dirname, 'tts_worker.py');
+  console.log('=== TTS DEBUG START ===');
+  console.log('script exists:', fs.existsSync(scriptPath));
+  execSync('python3 --version', { timeout: 5000 }, (err, stdout, stderr) => { console.log('python stdout:', stdout, 'stderr:', stderr); });
+  const cmd = `python3 "${scriptPath}" "测试" "${testFile}"`;
+  console.log('cmd:', cmd);
+  execSync(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
+    console.log('exec err:', err, 'stdout:', stdout, 'stderr:', stderr);
+    console.log('file exists:', fs.existsSync(testFile));
+    if (fs.existsSync(testFile)) { console.log('file size:', fs.statSync(testFile).size); }
+    console.log('=== TTS DEBUG END ===');
+    if (err) res.json({ error: 'TTS failed', stderr }); else res.json({ success: true, stdout, fileExists: fs.existsSync(testFile) });
+  });
+});
 
 app.get('/', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -333,40 +388,3 @@ app.get('/', (req, res) => {
 
 const HOST = process.env.HOST || '0.0.0.0';
 app.listen(PORT, HOST, () => { console.log('时光宝盒 server running on http://' + HOST + ':' + PORT + ' (env PORT=' + process.env.PORT + ')'); });
-
-// DEBUG endpoint - test TTS directly
-app.post('/api/tts-test', async (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token || !sessions.has(token)) { return res.status(401).json({ error: '请先登录' }); }
-  
-  const { exec: execSync } = require('child_process');
-  const testText = '测试';
-  const testFile = '/tmp/tts_test_debug.mp3';
-  const scriptPath = path.join(__dirname, 'tts_worker.py');
-  
-  console.log('=== TTS DEBUG START ===');
-  console.log('script exists:', fs.existsSync(scriptPath));
-  console.log('python3 version:');
-  execSync('python3 --version', { timeout: 5000 }, (err, stdout, stderr) => {
-    console.log('python stdout:', stdout, 'stderr:', stderr);
-  });
-  
-  const cmd = `python3 "${scriptPath}" "测试" "${testFile}"`;
-  console.log('cmd:', cmd);
-  
-  execSync(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
-    console.log('exec err:', err);
-    console.log('exec stdout:', stdout);
-    console.log('exec stderr:', stderr);
-    console.log('file exists:', fs.existsSync(testFile));
-    if (fs.existsSync(testFile)) {
-      console.log('file size:', fs.statSync(testFile).size);
-    }
-    console.log('=== TTS DEBUG END ===');
-    if (err) {
-      res.json({ error: 'TTS failed', stderr });
-    } else {
-      res.json({ success: true, stdout, fileExists: fs.existsSync(testFile) });
-    }
-  });
-});
